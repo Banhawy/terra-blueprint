@@ -25,7 +25,7 @@ for dir in "${modules[@]}"; do
       while read -r alias; do printf 'provider "aws" {\n  alias = "%s"\n}\n' "$alias"; done >"$dir/$stub"
   fi
 
-  if out=$(cd "$dir" && terraform init -backend=false -input=false -no-color >/dev/null 2>&1 && terraform validate -no-color 2>&1); then
+  if out=$(cd "$dir" && terraform init -backend=false -input=false -no-color 2>&1 >/dev/null && terraform validate -no-color 2>&1); then
     echo "ok    $dir"
   else
     echo "FAIL  $dir"

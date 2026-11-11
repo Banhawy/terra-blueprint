@@ -31,6 +31,16 @@ jobs:
           # The cloud CLIs are not needed for static checks.
           install_args: terraform terragrunt tflint trivy terraform-docs python
 
+      # Each module and unit is initialised separately. Without a shared cache
+      # every one downloads its own copy of the AWS provider (~700 MB) and the
+      # runner runs out of disk. Module lock files are not committed, so allow
+      # the cache to be used even when a lock file lacks this platform's hash.
+      - name: Share Terraform provider downloads
+        run: |
+          mkdir -p "$RUNNER_TEMP/tf-plugin-cache"
+          echo "TF_PLUGIN_CACHE_DIR=$RUNNER_TEMP/tf-plugin-cache" >> "$GITHUB_ENV"
+          echo "TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE=true" >> "$GITHUB_ENV"
+
       - name: Format
         run: |
           terraform fmt -recursive -check modules
