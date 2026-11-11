@@ -1,0 +1,97 @@
+# Applies infrastructure.
+#
+#   push to main       -> staging (AWS + GCP), automatically
+#   manual dispatch    -> production (AWS), gated by the `production` GitHub
+#                         Environment -- add required reviewers to it in the
+#                         repository settings.
+#
+# Each job authenticates keylessly with a role / service account that trusts
+# only its GitHub Environment (see live/*/_common/operations/).
+name: deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "live/**"
+      - "modules/**"
+      - "common.hcl"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to apply
+        type: choice
+        options: [staging, production]
+        default: staging
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  TG_TF_PATH: terraform
+  TG_NO_TIPS: "true"
+  TF_IN_AUTOMATION: "true"
+
+jobs:
+  staging:
+    if: github.event_name == 'push' || inputs.environment == 'staging'
+    runs-on: ubuntu-latest
+    environment: staging
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: false # never interrupt an apply
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: terraform terragrunt
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        if: vars.AWS_STAGING_APPLY_ROLE_ARN != ''
+        with:
+          role-to-assume: ${{ vars.AWS_STAGING_APPLY_ROLE_ARN }}
+          aws-region: eu-central-1
+          role-duration-seconds: 7200
+      - name: Apply AWS staging
+        if: vars.AWS_STAGING_APPLY_ROLE_ARN != ''
+        working-directory: live/aws/staging
+        run: terragrunt run --all --non-interactive -- apply -no-color
+
+      - uses: google-github-actions/auth@v3
+        if: vars.GCP_STAGING_WIF_PROVIDER != ''
+        with:
+          workload_identity_provider: ${{ vars.GCP_STAGING_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_STAGING_APPLY_SERVICE_ACCOUNT }}
+      - name: Apply GCP staging
+        if: vars.GCP_STAGING_WIF_PROVIDER != ''
+        working-directory: live/gcp/staging
+        run: terragrunt run --all --non-interactive -- apply -no-color
+
+  production:
+    if: github.event_name == 'workflow_dispatch' && inputs.environment == 'production' && vars.AWS_PRODUCTION_APPLY_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: terraform terragrunt
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_PRODUCTION_APPLY_ROLE_ARN }}
+          aws-region: eu-central-1
+          role-duration-seconds: 7200
+
+      # Plan first so the reviewer of the run can read exactly what applies.
+      - name: Plan AWS production
+        working-directory: live/aws/production
+        run: terragrunt run --all --non-interactive -- plan -no-color
+
+      - name: Apply AWS production
+        working-directory: live/aws/production
+        run: terragrunt run --all --non-interactive -- apply -no-color

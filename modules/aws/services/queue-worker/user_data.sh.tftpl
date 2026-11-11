@@ -1,0 +1,77 @@
+#!/bin/bash
+# Bootstraps a queue-worker instance (Amazon Linux 2023). Rendered by
+# Terraform's templatefile(): placeholders are Terraform values. A literal
+# shell expansion would need a doubled dollar sign.
+set -euxo pipefail
+exec > >(tee /var/log/user-data.log) 2>&1
+
+retry() {
+  for attempt in 1 2 3 4 5; do
+    "$@" && return 0
+    echo "attempt $attempt failed: $*; retrying in 5s"
+    sleep 5
+  done
+  return 1
+}
+
+# --- Packages ---------------------------------------------------------------
+retry dnf install -y python3.12 python3.12-pip amazon-cloudwatch-agent
+
+# --- Logs -> CloudWatch -----------------------------------------------------
+cat > /opt/aws/amazon-cloudwatch-agent/etc/worker.json <<CWAGENT
+{
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          { "file_path": "/var/log/worker.log", "log_group_name": "${log_group_name}", "log_stream_name": "{instance_id}" },
+          { "file_path": "/var/log/user-data.log", "log_group_name": "${log_group_name}", "log_stream_name": "{instance_id}-bootstrap" }
+        ]
+      }
+    }
+  }
+}
+CWAGENT
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/worker.json
+
+# --- Worker code ------------------------------------------------------------
+# Keys embed a hash of the code, so new code = new user data = instance refresh.
+install -d /opt/worker
+%{ for file, key in code_keys ~}
+retry aws s3 cp "s3://${code_bucket}/${key}" "/opt/worker/${file}" --region "${aws_region}"
+%{ endfor ~}
+
+python3.12 -m venv /opt/worker/venv
+retry /opt/worker/venv/bin/pip install --quiet -r /opt/worker/requirements.txt
+
+# --- Service ----------------------------------------------------------------
+cat > /etc/systemd/system/worker.service <<UNIT
+[Unit]
+Description=Queue worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/worker
+Environment=AWS_REGION=${aws_region}
+Environment=AWS_DEFAULT_REGION=${aws_region}
+Environment=QUEUE_URL=${queue_url}
+Environment=RESULTS_BUCKET=${results_bucket}
+Environment=ASG_NAME=${asg_name}
+ExecStart=/opt/worker/venv/bin/python /opt/worker/worker.py
+StandardOutput=append:/var/log/worker.log
+StandardError=append:/var/log/worker.log
+Restart=on-failure
+RestartSec=10
+# SIGTERM lets the worker finish its current message before exiting.
+KillSignal=SIGTERM
+TimeoutStopSec=${stop_timeout_seconds}
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now worker

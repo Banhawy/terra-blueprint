@@ -1,0 +1,15 @@
+# Trivy IaC scan settings:  trivy config .
+# Findings accepted on purpose are suppressed inline (#trivy:ignore:<ID>) next
+# to the resource, each with the reason -- never globally.
+severity:
+  - HIGH
+  - CRITICAL
+exit-code: 1
+scan:
+  skip-dirs:
+    - "**/.terraform"
+    - "**/.terragrunt-cache"
+misconfiguration:
+  scanners:
+    - terraform
+    - dockerfile

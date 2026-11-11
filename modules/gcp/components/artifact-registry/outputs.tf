@@ -1,0 +1,9 @@
+output "repository_url" {
+  value       = "${google_artifact_registry_repository.this.location}-docker.pkg.dev/${google_artifact_registry_repository.this.project}/${google_artifact_registry_repository.this.repository_id}"
+  description = "Image prefix: <region>-docker.pkg.dev/<project>/<repo>. Append /<image>:<tag>."
+}
+
+output "repository_id" {
+  value       = google_artifact_registry_repository.this.id
+  description = "Full repository resource ID."
+}

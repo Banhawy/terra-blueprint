@@ -1,0 +1,55 @@
+# pre-commit install   -- then these run on every commit (tools from mise.toml).
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: local
+    hooks:
+      - id: terraform-fmt
+        name: terraform fmt
+        entry: terraform fmt -recursive modules
+        language: system
+        files: \.(tf|tftest\.hcl)$
+        pass_filenames: false
+
+      - id: terragrunt-hcl-fmt
+        name: terragrunt hcl fmt
+        entry: terragrunt hcl fmt --log-level error
+        language: system
+        files: \.hcl$
+        exclude: (\.tftest\.hcl|\.tflint\.hcl|\.terraform\.lock\.hcl)$
+        pass_filenames: false
+
+      - id: terraform-validate
+        name: terraform validate (modules)
+        entry: scripts/validate-modules.sh
+        language: system
+        files: ^modules/.*\.tf$
+        pass_filenames: false
+
+      - id: tflint
+        name: tflint
+        entry: bash -c 'cd modules && tflint --recursive --config "$PWD/../.tflint.hcl"'
+        language: system
+        files: ^modules/.*\.tf$
+        pass_filenames: false
+
+      - id: trivy
+        name: trivy config
+        entry: trivy config --config trivy.yaml --quiet .
+        language: system
+        files: (\.tf|Dockerfile)$
+        pass_filenames: false
+
+      - id: terraform-docs
+        name: terraform-docs
+        entry: scripts/generate-docs.sh
+        language: system
+        files: ^modules/.*(\.tf|README\.md)$
+        pass_filenames: false

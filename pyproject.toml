@@ -1,0 +1,5 @@
+# Python here is limited to code shipped alongside the modules (the queue-worker
+# stub and the alert-notifier Lambda). Tests: `python -m pytest`.
+[tool.pytest.ini_options]
+testpaths = ["modules"]
+addopts = "-q --import-mode=importlib"

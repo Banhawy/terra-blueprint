@@ -1,0 +1,27 @@
+# Local tooling shell. The repo is bind-mounted at /work; cloud credentials come
+# from your host config (gcloud read-only).
+#
+#   docker compose run --rm terra
+#   # then, inside: cd live/aws/staging/eu-central-1/network/vpc && terragrunt plan
+services:
+  terra:
+    build: .
+    image: infra-tools:local
+    working_dir: /work
+    stdin_open: true
+    tty: true
+    volumes:
+      - .:/work
+      - ${HOME}/.aws:/home/infra/.aws # read-write: the AWS CLI caches SSO tokens here
+      - ${HOME}/.config/gcloud:/home/infra/.config/gcloud:ro
+      - plugin-cache:/home/infra/.terraform.d/plugin-cache
+    environment:
+      # AWS: pick a named profile from ~/.aws/config (SSO profiles work after
+      # `aws sso login` on the host).
+      - AWS_PROFILE
+      - AWS_REGION
+      # GCP: application-default credentials from `gcloud auth application-default login`.
+      - GOOGLE_APPLICATION_CREDENTIALS=/home/infra/.config/gcloud/application_default_credentials.json
+
+volumes:
+  plugin-cache:

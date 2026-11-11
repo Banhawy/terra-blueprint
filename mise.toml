@@ -1,0 +1,17 @@
+# Single source of truth for tool versions -- used locally (`mise install`),
+# by the Dockerfile and by CI (jdx/mise-action). Bump versions here only.
+[tools]
+terraform      = "1.17.1"
+terragrunt     = "1.2.1"
+tflint         = "0.66.0"
+trivy          = "0.76.2"
+terraform-docs = "0.24.0"
+pre-commit     = "4.7.0"
+python         = "3.12"
+awscli         = "2.39.7"
+gcloud         = "592.0.0"
+
+[env]
+# Terragrunt 1.x defaults to OpenTofu (`tofu`). This repo standardises on
+# Terraform; the code stays OpenTofu-compatible -- set TG_TF_PATH=tofu to switch.
+TG_TF_PATH = "terraform"

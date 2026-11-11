@@ -1,0 +1,4 @@
+# Test dependencies for the Python code shipped alongside the modules
+# (queue-worker stub, alert-notifier Lambda). Runtime deps live next to each.
+boto3>=1.35,<2
+pytest==8.*

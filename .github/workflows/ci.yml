@@ -1,0 +1,119 @@
+# Checks every pull request and every push to main. Needs no cloud access.
+# The staging plans at the bottom run only once the repository variables
+# holding the CI role / service-account identities are set (README "First apply").
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TG_TF_PATH: terraform
+  TG_NO_TIPS: "true"
+  TF_IN_AUTOMATION: "true"
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: jdx/mise-action@v5
+        with:
+          # The cloud CLIs are not needed for static checks.
+          install_args: terraform terragrunt tflint trivy terraform-docs python
+
+      - name: Format
+        run: |
+          terraform fmt -recursive -check modules
+          terragrunt hcl fmt --check --log-level error
+
+      - name: Validate modules
+        run: scripts/validate-modules.sh
+
+      - name: Validate Terragrunt wiring (inputs vs. module variables)
+        run: terragrunt hcl validate --inputs --strict --log-level error
+        working-directory: live
+
+      - name: Validate every unit end to end (no backend, mock dependency outputs)
+        run: scripts/validate-live.sh
+
+      - name: tflint
+        run: |
+          tflint --init --config "$PWD/.tflint.hcl"
+          cd modules && tflint --recursive --config "$PWD/../.tflint.hcl"
+        env:
+          GITHUB_TOKEN: ${{ github.token }} # avoids rate limits when downloading rulesets
+
+      - name: Security scan (trivy)
+        run: trivy config --config trivy.yaml .
+
+      - name: Module tests (terraform test, mocked providers)
+        run: scripts/test-modules.sh
+
+      - name: Python tests
+        run: |
+          python -m pip install --quiet -r requirements-dev.txt
+          python -m pytest
+
+      - name: Module docs are up to date
+        run: |
+          scripts/generate-docs.sh
+          git diff --exit-code -- modules
+
+      - name: Forbidden terms
+        run: scripts/check-forbidden-terms.sh
+        env:
+          FORBIDDEN_TERMS: ${{ vars.FORBIDDEN_TERMS }}
+
+  plan-aws-staging:
+    needs: checks
+    if: github.event_name == 'pull_request' && vars.AWS_STAGING_PLAN_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # GitHub OIDC token -> AWS role
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: terraform terragrunt
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_STAGING_PLAN_ROLE_ARN }}
+          aws-region: eu-central-1
+      - name: Plan
+        working-directory: live/aws/staging
+        run: |
+          terragrunt run --all --non-interactive -- plan -no-color -lock=false 2>&1 | tee plan.txt
+          { echo '### AWS staging plan'; echo '```'; tail -c 60000 plan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  plan-gcp-staging:
+    needs: checks
+    if: github.event_name == 'pull_request' && vars.GCP_STAGING_WIF_PROVIDER != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # GitHub OIDC token -> Workload Identity Federation
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: terraform terragrunt
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_STAGING_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_STAGING_PLAN_SERVICE_ACCOUNT }}
+      - name: Plan
+        working-directory: live/gcp/staging
+        run: |
+          terragrunt run --all --non-interactive -- plan -no-color -lock=false 2>&1 | tee plan.txt
+          { echo '### GCP staging plan'; echo '```'; tail -c 60000 plan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
